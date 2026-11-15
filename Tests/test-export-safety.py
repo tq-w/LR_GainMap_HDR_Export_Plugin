@@ -30,7 +30,7 @@ for mode, path, transfer in [('hlg',folder/'synthetic-hdr (2).heic','HLG'),('pq'
     subprocess.run(['swift', str(work/'verify-direct-hdr.swift'), str(path), mode], check=True)
 print('PASS: rename / skip / overwrite; valid 10-bit PQ and HLG, no gain maps', flush=True)
 
-for input in [root/'sdr.tif', root/'sdr.jpg']:
+for input in [root/'sdr-8.tif', root/'sdr.jpg', root/'broken.tif']:
     target = folder/(input.stem+'.heic'); target.write_bytes(b'keep-original')
     result = run(folder, 'hlg', 'overwrite', input)
     assert result.returncode == 1 and target.read_bytes() == b'keep-original'

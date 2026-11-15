@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import CoreImage
 import ImageIO
 import Darwin
 
@@ -60,68 +61,105 @@ func pathExists(_ url: URL) -> Bool {
     return url.path.withCString { lstat($0, &info) } == 0
 }
 
-func validateInput(_ request: ExportRequest) throws {
+enum InputRange { case sdr, hdr, system }
+
+// Classify each actual rendition, rather than the session's HDR preset. Lightroom
+// renders SDR TIFFs for photos whose HDR editing is off, even in a mixed batch.
+func validateInput(_ request: ExportRequest) throws -> InputRange {
     guard let source = CGImageSourceCreateWithURL(request.input as CFURL, nil) else {
         throw failure("无法读取 Lightroom 渲染的中间文件。")
     }
-    if request.mode == "sips" { return }
+    if request.mode == "sips" { return .system }
     guard CGImageSourceGetType(source) as String? == "public.tiff",
           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
           let depth = properties[kCGImagePropertyDepth as String] as? NSNumber,
-          depth.intValue >= 16,
+          [16, 32].contains(depth.intValue),
           let image = CGImageSourceCreateImageAtIndex(source, 0,
             [kCGImageSourceShouldCache: false] as CFDictionary),
           let space = image.colorSpace else {
-        throw failure("HDR 模式需要 Lightroom 渲染的 16 位或 32 位 HDR TIFF；请重新打开导出窗口。")
+        throw failure("需要 Lightroom 渲染的 16 位或 32 位 TIFF；请重新打开导出窗口。")
     }
     let floatLinear = depth.intValue == 32 && image.bitmapInfo.contains(.floatComponents) &&
         ((space.name as String? ?? "").lowercased().contains("linear") || CGColorSpaceUsesExtendedRange(space))
-    guard CGColorSpaceUsesITUR_2100TF(space) || floatLinear else {
-        throw failure("中间 TIFF 使用 SDR 色彩编码。请在照片中开启 HDR 编辑，并使用 HDR 色彩空间、开启 HDR 输出、关闭最大兼容。")
-    }
+    guard space.model == .rgb else { throw failure("中间 TIFF 需要 RGB 色彩空间。") }
+    return CGColorSpaceUsesITUR_2100TF(space) || floatLinear ? .hdr : .sdr
 }
 
-func encode(_ request: ExportRequest, into folder: URL) throws -> URL {
-    let process = Process()
-    if request.mode == "sips" {
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
-        process.arguments = ["-s", "format", "heic", "-s", "formatOptions",
-            String(Int((request.quality * 100).rounded())), "-o",
-            folder.appendingPathComponent(request.destination.lastPathComponent).path, request.input.path]
-    } else {
-        let binaryFolder = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.deletingLastPathComponent()
-        process.executableURL = binaryFolder.appendingPathComponent("toGainMapHDR")
-        var flags = [request.input.path, folder.path, "-q", String(request.quality)]
-        switch request.mode {
-        case "pq": flags += ["-p", "-d", "10"]
-        case "hlg": flags += ["-h", "-d", "10"]
-        case "apple": flags += ["-g", "-d", String(request.depth), "-H", String(request.scale)]
-        default: flags += ["-d", String(request.depth), "-H", String(request.scale)]
-        }
-        if let quality = request.gainQuality { flags += ["-Q", String(quality)] }
-        process.arguments = flags
+func encodeSDR(_ request: ExportRequest, to output: URL) throws {
+    guard let source = CGImageSourceCreateWithURL(request.input as CFURL, nil),
+          let sourceImage = CGImageSourceCreateImageAtIndex(source, 0, nil),
+          let space = sourceImage.colorSpace else { throw failure("无法读取 SDR 中间图像。") }
+    // Preserve the Lightroom-rendered SDR appearance and ICC profile. Do not
+    // apply the HDR tone mapper, a transfer-function conversion, or a gain map.
+    let image = CIImage(cgImage: sourceImage)
+    let context = CIContext()
+    guard let rendered = context.createCGImage(image, from: image.extent,
+            format: request.depth == 10 ? .RGB10 : .RGBA8, colorSpace: space),
+          let destination = CGImageDestinationCreateWithURL(output as CFURL, "public.heic" as CFString, 1, nil) else {
+        throw failure("无法创建 SDR HEIC。")
     }
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = pipe
-    try process.run()
-    let log = pipe.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationReason == .exit && process.terminationStatus == 0 else {
-        let detail = String(data: log, encoding: .utf8) ?? ""
-        throw failure("HEIC 编码失败（\(process.terminationStatus)）。\n\(detail.suffix(4000))")
-    }
+    var properties = (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]) ?? [:]
+    properties[kCGImageDestinationLossyCompressionQuality as String] = request.quality
+    CGImageDestinationAddImage(destination, rendered, properties as CFDictionary)
+    guard CGImageDestinationFinalize(destination) else { throw failure("SDR HEIC 编码失败。") }
+}
+
+func encode(_ request: ExportRequest, range: InputRange, into folder: URL) throws -> URL {
     let output = folder.appendingPathComponent(request.destination.lastPathComponent)
+    if range == .sdr {
+        try encodeSDR(request, to: output)
+        print("已自动选择 SDR HEIC（无增益图）。")
+    } else {
+        let process = Process()
+        if request.mode == "sips" {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
+            process.arguments = ["-s", "format", "heic", "-s", "formatOptions",
+                String(Int((request.quality * 100).rounded())), "-o",
+                folder.appendingPathComponent(request.destination.lastPathComponent).path, request.input.path]
+        } else {
+            let binaryFolder = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.deletingLastPathComponent()
+            process.executableURL = binaryFolder.appendingPathComponent("toGainMapHDR")
+            var flags = [request.input.path, folder.path, "-q", String(request.quality)]
+            switch request.mode {
+            case "pq": flags += ["-p", "-d", "10"]
+            case "hlg": flags += ["-h", "-d", "10"]
+            case "apple": flags += ["-g", "-d", String(request.depth), "-H", String(request.scale)]
+            default: flags += ["-d", String(request.depth), "-H", String(request.scale)]
+            }
+            if let quality = request.gainQuality { flags += ["-Q", String(quality)] }
+            process.arguments = flags
+        }
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        let log = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationReason == .exit && process.terminationStatus == 0 else {
+            let detail = String(data: log, encoding: .utf8) ?? ""
+            throw failure("HEIC 编码失败（\(process.terminationStatus)）。\n\(detail.suffix(4000))")
+        }
+    }
     guard let source = CGImageSourceCreateWithURL(output as CFURL, nil) else {
         throw failure("编码程序未生成可读取的 HEIC，中间 TIFF 已保留。")
     }
-    if request.mode == "iso" || request.mode == "apple" {
+    if range == .sdr {
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary?
+        guard (properties?[kCGImagePropertyDepth] as? NSNumber)?.intValue == request.depth,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let space = image.colorSpace, !CGColorSpaceUsesITUR_2100TF(space),
+              CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) == nil,
+              CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeISOGainMap) == nil else {
+            throw failure("SDR 输出的位深、色彩编码或增益图检查失败。")
+        }
+    }
+    if range == .hdr && (request.mode == "iso" || request.mode == "apple") {
         let type = request.mode == "iso" ? kCGImageAuxiliaryDataTypeISOGainMap : kCGImageAuxiliaryDataTypeHDRGainMap
         guard CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, type) != nil else {
             throw failure("输出中没有预期的 HDR 增益图；照片可能未包含超出 SDR 范围的亮度。请检查 HDR 编辑。")
         }
     }
-    if request.mode == "pq" || request.mode == "hlg" {
+    if range == .hdr && (request.mode == "pq" || request.mode == "hlg") {
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as NSDictionary?
         guard (properties?[kCGImagePropertyDepth] as? NSNumber)?.intValue == 10,
               let image = CGImageSourceCreateImageAtIndex(source, 0,
@@ -171,12 +209,12 @@ func run() throws -> Bool {
         print("已跳过重名文件：\(request.destination.lastPathComponent)")
         return false
     }
-    try validateInput(request)
+    let range = try validateInput(request)
     let stage = request.folder.appendingPathComponent(".heic-export-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: false,
         attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: stage) }
-    let encoded = try encode(request, into: stage)
+    let encoded = try encode(request, range: range, into: stage)
     if let saved = try publish(encoded, request: request) {
         print("已保存：\(saved.path)")
         return true

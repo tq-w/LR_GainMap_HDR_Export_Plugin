@@ -224,7 +224,7 @@ exportServiceProvider.sectionsForTopOfDialog = function(viewFactory, propertyTab
                 },
             },
             f:static_text {
-                title = 'HDR 模式自动使用 TIFF 16 位、HDR 色彩空间，开启 HDR 输出并关闭最大兼容。',
+                title = '自动识别每张照片：SDR 导出普通 HEIC；HDR 按上述模式导出，无需手动切换。',
             },
             f:static_text {
                 title = '直接 PQ／HLG HDR 固定输出 10 位，不含增益图；标准和缩放不适用。',

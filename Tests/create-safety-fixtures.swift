@@ -8,6 +8,11 @@ try context.writeTIFFRepresentation(of: sdr, to: root.appendingPathComponent("sd
     format: .RGBA16, colorSpace: CGColorSpace(name: CGColorSpace.displayP3)!, options: [:])
 try context.writeJPEGRepresentation(of: sdr, to: root.appendingPathComponent("sdr.jpg"),
     colorSpace: CGColorSpace(name: CGColorSpace.displayP3)!, options: [:])
+try context.writeTIFFRepresentation(of: sdr, to: root.appendingPathComponent("sdr-8.tif"),
+    format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.displayP3)!, options: [:])
+try context.writeTIFFRepresentation(of: sdr, to: root.appendingPathComponent("sdr-srgb.tif"),
+    format: .RGBA16, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, options: [:])
+try Data("not a TIFF".utf8).write(to: root.appendingPathComponent("broken.tif"))
 let hdr = CIImage(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2]), options: [.expandToHDR: true])!
     .transformed(by: CGAffineTransform(scaleX: 8, y: 8))
 try context.writeTIFFRepresentation(of: hdr, to: root.appendingPathComponent("large-hdr.tif"),

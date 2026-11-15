@@ -17,6 +17,6 @@ for script, target in [('create-hdr-test.swift','synthetic-hdr.tif'),
                        ('create-odd-hdr.swift','odd-hdr.tif'),
                        ('create-textured-hdr.swift','textured-hdr.tif')]:
     subprocess.run(['swift', str(here/script), str(root/target)], check=True)
-for script in ['run-iso-scale-tests.py', 'test-gain-quality.py', 'test-export-safety.py']:
+for script in ['run-iso-scale-tests.py', 'test-gain-quality.py', 'test-auto-sdr.py', 'test-export-safety.py']:
     subprocess.run([sys.executable, str(here/script)], check=True)
 print('All synthetic integration checks passed. Fixtures and encoded outputs:', root)

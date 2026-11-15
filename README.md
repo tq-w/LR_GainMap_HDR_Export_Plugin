@@ -1,6 +1,6 @@
 # Lightroom Classic HEIC HDR 导出插件（中文增强版）
 
-这是 [fengshenx/LR_GainMap_HDR_Export_Plugin](https://github.com/fengshenx/LR_GainMap_HDR_Export_Plugin) 的 fork，保留原项目历史并增加中文界面、格式控制和导出保护。当前插件版本为 **1.0.0.6**。
+这是 [fengshenx/LR_GainMap_HDR_Export_Plugin](https://github.com/fengshenx/LR_GainMap_HDR_Export_Plugin) 的 fork，保留原项目历史并增加中文界面、格式控制和导出保护。当前插件版本为 **1.0.0.7**。
 
 A Chinese-language fork with Apple/ISO gain maps, independent ISO gain-map quality, 8/10-bit base images, gain-map scaling, direct PQ/HLG HDR, and safe output naming. The Swift source and universal macOS executables are included.
 
@@ -20,11 +20,14 @@ A Chinese-language fork with Apple/ISO gain maps, independent ISO gain-map quali
 - HDR 模式在渲染前自动配置 TIFF 16 位、HDR 色彩空间、HDR 输出开启和最大兼容关闭，并检查实际中间文件。
 - 最终 HEIC 重名可选「自动改名」「跳过」「覆盖」，默认自动改名。编码先在独立暂存目录完成，成功后再原子发布；失败保留中间 TIFF。
 
-**需要先在 Lightroom 的修改照片模块开启 HDR 编辑。** 导出选项不会替照片自动开启 HDR 编辑，也不会把普通 SDR 照片变成真正的 HDR。
+**自动匹配照片的 SDR／HDR 状态，无需切换导出设置。** 未开启 HDR 编辑的照片导出普通 SDR HEIC，不附带增益图；开启 HDR 编辑的照片按所选 HDR 模式导出。同一批照片可以混合 SDR 和 HDR。
+
+自动判断以每张照片实际渲染的 TIFF 色彩编码为准。SDR 路径保留 Lightroom 已渲染的外观及色彩配置，不再额外做 HDR 色调映射；主图位深和品质沿用当前设置，忽略增益图参数。导出选项不会修改照片的 HDR 编辑开关。
 
 ## 环境
 
 - macOS 15 或更新版本。
+- 1.0.0.7 的 SDR 自动识别在 macOS 27.2.1、Lightroom Classic 15.5.1 验证。
 - Lightroom Classic 14 或更新版本；本机实测 Lightroom Classic 15.5.1、macOS 27.0.1。
 - 随仓库提供 arm64 + x86_64 通用程序；Intel 已编译，尚未在 Intel Mac 实机验证。
 - 随附程序使用本地临时签名，未作 Developer ID 公证。
@@ -40,7 +43,7 @@ A Chinese-language fork with Apple/ISO gain maps, independent ISO gain-map quali
 
 ## 使用
 
-1. 完成照片的 HDR 编辑，打开导出窗口。
+1. 完成照片编辑，打开导出窗口。HDR 开关按照片需要设置即可。
 2. 顶部「导出到」选择 **「导出为 HEIC（HDR）」**。
 3. 选择输出模式、Apple／ISO 标准、主图位深和增益图缩放。
 4. 如需控制 ISO 增益图体积，勾选「单独设置」，调节增益图品质。低品质可能损失高光或渐变细节；100 表示最高编码品质，不承诺绝对无损。
