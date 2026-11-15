@@ -29,32 +29,43 @@ APP_PASSWORD?=
 
 # Optional: set SIGN_ID to your Developer ID Application certificate
 # Example: SIGN_ID=Developer ID Application: Your Name (TEAMID)
-SIGN_ID?=
+SIGN_ID?=-
 
 ifeq ($(strip $(SIGN_ID)),)
 SIGN_CMD=@echo "Skipping codesign: SIGN_ID not set"
+else ifeq ($(SIGN_ID),-)
+SIGN_CMD=codesign --force --sign -
 else
 # Use Apple's timestamp server explicitly to avoid 'timestamp expected' errors
 SIGN_CMD=codesign --force --options runtime --timestamp=http://timestamp.apple.com/ts01 --sign "$(SIGN_ID)" --verbose=4
 endif
 
-.PHONY: all clean
+.PHONY: all clean swift metal test zip
 
-all:
-	mkdir -p $(PLUGIN_DIR) $(BUILD_DIR)
-	# Compile the CoreImage metal shaders with the fcikernel flag
+all: swift
+
+# A compiled kernel is shipped; rebuilding it requires the full Xcode Metal tools.
+metal:
 	xcrun -sdk macosx metal -fcikernel CustomFilter/GainMapKernel.ci.metal -o $(PLUGIN_DIR)/GainMapKernel.ci.metallib
+
+swift:
+	mkdir -p $(PLUGIN_DIR) $(BUILD_DIR)
 	# Compile Swift for x86_64
 	swiftc -O -target x86_64-apple-macos15 \
-		main.swift CustomFilter/*.swift -o $(BIN_X86)
+		main.swift CustomFilter/*.swift ISOExport.swift GainMapCompression.swift -o $(BIN_X86)
 	# Compile Swift for arm64
 	swiftc -O -target arm64-apple-macos15 \
-		main.swift CustomFilter/*.swift -o $(BIN_ARM)
+		main.swift CustomFilter/*.swift ISOExport.swift GainMapCompression.swift -o $(BIN_ARM)
 	# Create universal binary
 	lipo -create -output $(BIN_UNI) $(BIN_X86) $(BIN_ARM)
 	chmod +x $(BIN_UNI)
 	# Codesign executable (if SIGN_ID provided)
 	$(SIGN_CMD) $(BIN_UNI)
+	swiftc -O -target x86_64-apple-macos15 HEICExport.swift -o $(BUILD_DIR)/HEICExport_x86_64
+	swiftc -O -target arm64-apple-macos15 HEICExport.swift -o $(BUILD_DIR)/HEICExport_arm64
+	lipo -create $(BUILD_DIR)/HEICExport_x86_64 $(BUILD_DIR)/HEICExport_arm64 -output $(PLUGIN_DIR)/HEICExport
+	chmod +x $(PLUGIN_DIR)/HEICExport
+	$(SIGN_CMD) $(PLUGIN_DIR)/HEICExport
 	# Note: .lrdevplugin is not an app bundle; skip signing the directory itself
 
 .PHONY: dmg dist adhoc install unquarantine notarize staple verify release help
@@ -110,7 +121,8 @@ staple: notarize
 	xcrun stapler staple "$(DMG_PATH)"
 
 verify:
-	codesign --verify --strict --verbose=2 "$(BIN_UNI)" || true
+	codesign --verify --strict --verbose=2 "$(BIN_UNI)"
+	codesign --verify --strict --verbose=2 "$(PLUGIN_DIR)/HEICExport"
 	# Assess the distributable DMG for Gatekeeper open policy
 	@if [ -f "$(DMG_PATH)" ]; then spctl --assess --type open -vv "$(DMG_PATH)" || true; else echo "(skip) $(DMG_PATH) not found"; fi
 	# Assess the executable for Gatekeeper execute policy
@@ -121,7 +133,10 @@ release: dist notarize staple
 
 help:
 	@echo "Targets:"
-	@echo "  all            Build universal binary (arm64+x86_64) and optional sign"
+	@echo "  all            Build both universal binaries (arm64+x86_64) and sign"
+	@echo "  metal          Rebuild the bundled Metal kernel (requires full Xcode)"
+	@echo "  test           Run synthetic integration checks (requires lua and heif-info)"
+	@echo "  zip            Package the built plugin"
 	@echo "  dmg            Create distributable DMG ($(DMG_PATH))"
 	@echo "  dist           Build + dmg"
 	@echo "  adhoc          Build with ad-hoc signature and zip"
@@ -133,6 +148,11 @@ help:
 	@echo "  release        dist + notarize + staple"
 	@echo "Variables: SIGN_ID=\"Developer ID Application: Your Name (TEAMID)\" (use '-' for ad-hoc)"
 
+test: all
+	python3 Tests/run.py
+
+zip:
+	ditto -c -k --keepParent "$(PLUGIN_DIR)" export_heic.lrdevplugin.zip
+
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f $(PLUGIN_DIR)/GainMapKernel.ci.metallib $(BIN_UNI)

@@ -1,75 +1,99 @@
-# Gainmap HDR HEIF Export Plugin for Lightroom Classic
+# Lightroom Classic HEIC HDR 导出插件（中文增强版）
 
-This plugin enables exporting in the Gainmap HDR HEIF format from Lightroom Classic.
+这是 [fengshenx/LR_GainMap_HDR_Export_Plugin](https://github.com/fengshenx/LR_GainMap_HDR_Export_Plugin) 的 fork，保留原项目历史并增加中文界面、格式控制和导出保护。当前插件版本为 **1.0.0.6**。
 
-Starting with LRC 14.0, HDR export is supported, but it doesn’t include Gainmap support, which causes compatibility issues on Android devices. This plugin resolves that problem.
+A Chinese-language fork with Apple/ISO gain maps, independent ISO gain-map quality, 8/10-bit base images, gain-map scaling, direct PQ/HLG HDR, and safe output naming. The Swift source and universal macOS executables are included.
 
-**Note**: Currently supports Lightroom Classic 14.0 and macOS 15.0 only.
+## 功能
 
-Gainmap code is from [PQ_HDR_to_Gain_Map_HDR](https://github.com/chemharuka/PQ_HDR_to_Gain_Map_HDR)
+| 输出模式 | 主图位深 | 增益图 | 可调参数 |
+|---|---|---|---|
+| Apple 增益图 HEIC | 8 / 10 位 | Apple 格式 | 主图品质、增益图缩放 |
+| ISO 增益图 HEIC | 8 / 10 位 | ISO 21496-1 | 主图品质、增益图缩放、独立增益图品质 |
+| 直接 PQ HDR HEIC | 固定 10 位 | 无 | 图像品质 |
+| 直接 HLG HDR HEIC | 固定 10 位 | 无 | 图像品质 |
+| macOS SIPS HEIC | 系统决定 | 无 | 图像品质 |
 
----
-## Download the LRC plugin
+- 中文导出界面，可保存 Lightroom 导出预设。
+- 增益图缩小倍数 **1–2**，支持小数；2 表示宽、高各减半，主图尺寸不变。奇数尺寸向上取整。
+- ISO 增益图品质 **0–100**：勾选「单独设置」后生效，初始数值 80；默认关闭，旧预设继续使用系统默认编码。该数值是编码品质，不是 QP，没有固定换算公式。
+- HDR 模式在渲染前自动配置 TIFF 16 位、HDR 色彩空间、HDR 输出开启和最大兼容关闭，并检查实际中间文件。
+- 最终 HEIC 重名可选「自动改名」「跳过」「覆盖」，默认自动改名。编码先在独立暂存目录完成，成功后再原子发布；失败保留中间 TIFF。
 
-1. Download the plugin. [Release](https://github.com/fengshenx/LR_GainMap_HDR_Export_Plugin/releases/tag/v1.1)
-2. Open the DMG file.
-3. Drag the export_heic.lrdevplugin to your disk.
+**需要先在 Lightroom 的修改照片模块开启 HDR 编辑。** 导出选项不会替照片自动开启 HDR 编辑，也不会把普通 SDR 照片变成真正的 HDR。
 
+## 环境
 
-## Adding the Plugin to LRC
+- macOS 15 或更新版本。
+- Lightroom Classic 14 或更新版本；本机实测 Lightroom Classic 15.5.1、macOS 27.0.1。
+- 随仓库提供 arm64 + x86_64 通用程序；Intel 已编译，尚未在 Intel Mac 实机验证。
+- 随附程序使用本地临时签名，未作 Developer ID 公证。
 
-1. Open the "Plug-in Manager" in LRC.
-2. Click "Add."
-3. Select this plugin.
+## 安装
 
----
+1. 下载本 fork 的源码 ZIP，或克隆仓库。
+2. 把其中的 **`export_heic.lrdevplugin` 整个文件夹**放到固定位置。
+3. 在 Lightroom Classic 中打开「文件 → 增效工具管理器 → 添加」，选择该文件夹。
+4. 更新已有版本后，在增效工具管理器点击「重新载入增效工具」。
 
-## How to Use
+也可将插件文件夹放入 `~/Library/Application Support/Adobe/Lightroom/Modules/`。请先保存旧版本的副本，避免覆盖自己的其他改动。
 
-1. Select your photo(s) and open the Export window.
-2. At the top, choose "Export to HEIC."
-3. Set the export format to **TIFF**.
-4. Enable HDR output, but **disable "Maximum Compatibility"**
-5. Start the export process.
+## 使用
 
----
+1. 完成照片的 HDR 编辑，打开导出窗口。
+2. 顶部「导出到」选择 **「导出为 HEIC（HDR）」**。
+3. 选择输出模式、Apple／ISO 标准、主图位深和增益图缩放。
+4. 如需控制 ISO 增益图体积，勾选「单独设置」，调节增益图品质。低品质可能损失高光或渐变细节；100 表示最高编码品质，不承诺绝对无损。
+5. 选择输出目录与重名策略，开始导出。
 
-## Build
-
-1. Install the Xcode development environment.
-2. Run `make` in the directory.
-
-Since the export process uses TIFF as an intermediary format, ensure you select **TIFF** for export.
-
--------------
-
-# Gainmap HDR Heif Lightroom Classic导出插件
-这是一个支持Gainmap HDR Heif格式导出的Lightroom Classic插件。
-
-LRC 14.0开始支持HDR导出了，但是导出格式不支持Gainmap，在Android手机上有兼容问题。这个插件可以解决这个问题。
-
-注意：当前仅支持Lightroom Classic 14.0 和 MacOS 15.0
-
-Gainmap算法来自：[PQ_HDR_to_Gain_Map_HDR](https://github.com/chemharuka/PQ_HDR_to_Gain_Map_HDR)
-
-## 下载插件
-
-1. 下载插件。 [点我下载](https://github.com/fengshenx/LR_GainMap_HDR_Export_Plugin/releases/tag/v1.0)
-2. 解压文件。
-  
-## LRC中添加插件
-* 打开LRC的增效工具管理器
-* 点击 **添加**
-* 选择这个插件
-
-## 使用方法
-* 选择照片，并打开导出窗口
-* 在顶部选择 "Export to HEIC"
-* 选择导出格式为**TIFF**。
-* 选择HDR输出。同时**不要选择最大兼容性**。
-* 开始导出
+直接 PQ／HLG 模式没有增益图，因此标准、缩放和增益图品质选项会禁用。
 
 ## 编译
-* 安装Xcode开发环境，在目录下执行`make`
 
-因为导出使用TIFF格式为中间格式，请务必选择导出为**TIFF**格式。 
+安装 Xcode Command Line Tools 后运行：
+
+```sh
+make
+make verify
+```
+
+默认分别编译 `toGainMapHDR` 和 `HEICExport` 的 arm64、x86_64 版本，合成通用程序，使用本地临时签名，再写入插件文件夹。默认使用仓库中已有的 Metal 库；需要重新编译着色器时，安装完整 Xcode 的 Metal 工具，再运行 `make metal`。
+
+其他命令：
+
+```sh
+make zip                     # 打包插件
+make SIGN_ID="你的签名证书"    # 可选 Developer ID 签名
+```
+
+主转换程序的源码是 `main.swift`、`CustomFilter/GainMapFilter.swift`、`ISOExport.swift` 和 `GainMapCompression.swift`。`HEICExport.swift` 是 Lightroom 调用的校验及安全发布入口。
+
+命令行示例（输出文件夹须已存在）：
+
+```sh
+export_heic.lrdevplugin/HEICExport input.tif output-folder \
+  --mode iso --depth 10 --scale 2 --quality 0.7 \
+  --gain-quality 0.8 --collision rename
+```
+
+`--gain-quality` 仅适用于 ISO HEIC；省略则使用系统默认。直接调用转换程序时，对应参数为 `-Q 0.8`。`HEICExport` 退出码为 0（成功）、10（跳过）、1（失败）。
+
+## 测试与实现说明
+
+开发测试需要 Python 3、Lua（包含 `luac`）和 `heif-info`；例如通过 Homebrew 安装 `lua`、`libheif`，然后运行：
+
+```sh
+make test
+```
+
+测试使用自动生成的 HDR／SDR 图像，不依赖私人照片或 Lightroom 目录，覆盖元数据、HDR 重建、8/10 位、奇数尺寸、分数缩放、品质独立性、参数校验、重名与并发保护。产物写入被 Git 忽略的 `build/tests/`。
+
+独立品质控制通过系统 HEIC 编码器重编码增益值，再替换 HEIF 内的增益图 item graph，保留主图压缩码流和 ISO 参数。自定义品质路径用中性 RGB 承载同一标量增益，系统编码为 8 位 YCbCr 4:2:0；它不是三个独立的彩色增益。关闭「单独设置」时保持原来的单通道增益图路径。详见 [验证记录与限制](docs/VALIDATION.md)。
+
+## 来源
+
+- Lightroom 插件原仓库：[fengshenx/LR_GainMap_HDR_Export_Plugin](https://github.com/fengshenx/LR_GainMap_HDR_Export_Plugin)。
+- 原转换程序及增益图算法：Luyao Peng / [chemharuka](https://github.com/chemharuka/toGainMapHDR)。Swift 主文件保留原作者及 MIT 声明，Metal 源码保留原作者署名。
+- 原项目说明保存在 [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)。
+
+本 fork 没有替上游未明确声明许可的文件追加统一许可证。各文件保留其原有许可及作者信息。

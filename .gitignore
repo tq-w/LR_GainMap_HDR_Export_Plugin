@@ -2,3 +2,6 @@
 build
 dmg_root
 export_heic.lrdevplugin.dmg
+__pycache__/
+*.pyc
+*.zip
