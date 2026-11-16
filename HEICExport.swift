@@ -6,8 +6,8 @@ import Darwin
 
 // Lightroom-facing runner: validate the rendered TIFF, encode in a private
 // staging directory, then publish with an atomic collision policy.
-func failure(_ message: String) -> NSError {
-    NSError(domain: "HEICExport", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+func failure(_ message: String, code: Int = 1) -> NSError {
+    NSError(domain: "HEICExport", code: code, userInfo: [NSLocalizedDescriptionKey: message])
 }
 
 struct ExportRequest {
@@ -77,7 +77,7 @@ func validateInput(_ request: ExportRequest) throws -> InputRange {
           let image = CGImageSourceCreateImageAtIndex(source, 0,
             [kCGImageSourceShouldCache: false] as CFDictionary),
           let space = image.colorSpace else {
-        throw failure("需要 Lightroom 渲染的 16 位或 32 位 TIFF；请重新打开导出窗口。")
+        throw failure("需要 Lightroom 渲染的 16 位或 32 位 TIFF。", code: 2)
     }
     let floatLinear = depth.intValue == 32 && image.bitmapInfo.contains(.floatComponents) &&
         ((space.name as String? ?? "").lowercased().contains("linear") || CGColorSpaceUsesExtendedRange(space))
@@ -227,5 +227,6 @@ do {
     exit(try run() ? 0 : 10)
 } catch {
     FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))
-    exit(1)
+    let code = error as NSError
+    exit(code.domain == "HEICExport" && code.code == 2 ? 2 : 1)
 }

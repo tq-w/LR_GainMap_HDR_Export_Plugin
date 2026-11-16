@@ -1,9 +1,11 @@
 local plugin = arg[1] or 'export_heic.lrdevplugin'
 local commands, deleted, errors, messages = {}, {}, {}, {}
 local exitCode, logText = 0, 'encoded output'
+local exitSequence, recoveredSettings = {}, nil
+local photo = {}
 local source = "/tmp/Gain Map's $(echo unsafe)/photo.tif"
 local modules = {
-    LrTasks = {execute = function(command) commands[#commands+1] = command; return exitCode end},
+    LrTasks = {execute = function(command) commands[#commands+1] = command; return table.remove(exitSequence,1) or exitCode end, pcall=pcall},
     LrUUID = {generateUUID = function() return 'test-uuid' end},
     LrDialogs = {
         showError = function(text) errors[#errors+1] = text end,
@@ -24,17 +26,39 @@ local modules = {
         done = function() end,
     } end,
 }
+modules.LrExportSession = function(params)
+    assert(params.photosToExport[1] == photo, 'recover the original rendition photo')
+    recoveredSettings = params.exportSettings
+    return {
+        doExportOnCurrentTask = function() end,
+        renditions = function() return ipairs({{waitForRender = function() return true, '/tmp/corrected.tif' end}}) end,
+    }
+end
 function import(name) return modules[name] or {} end
 _PLUGIN = {path = plugin}
 local provider = dofile(plugin .. '/ExportServiceProvider.lua')
 assert(provider.allowFileFormats[1] == 'TIFF' and #provider.allowFileFormats == 1)
 local session = {
     countRenditions = function() return 1 end,
-    renditions = function() return ipairs({{waitForRender = function() return true, source end}}) end,
+    renditions = function() return ipairs({{photo=photo, waitForRender = function() return true, source end}}) end,
 }
 local function run(settings, unconfigured)
     if not unconfigured then provider.updateExportSettings(settings) end
-    provider.processRenderedPhotos({}, {exportSession = session, propertyTable = settings})
+    local configured = false
+    provider.processRenderedPhotos({}, {
+        exportSession = session, propertyTable = settings,
+        configureProgress = function()
+            configured = true
+            return modules.LrProgressScope()
+        end,
+        renditions = function(_, options)
+            assert(configured, 'configure progress before starting the context renderer')
+            assert(options.stopIfCanceled, 'cancellation must propagate to Lightroom')
+            assert(settings.LR_format == 'TIFF' and settings.LR_export_bitDepth == 16,
+                'normalize required settings before rendering without a dialog')
+            return session:renditions()
+        end,
+    })
 end
 for _, mode in ipairs({'toGainMapHDR','pqHDR','hlgHDR','sips'}) do
     for _, policy in ipairs({'rename','skip','overwrite'}) do
@@ -62,12 +86,13 @@ run({gainMapStandard='iso', heicBitDepth='10', gainMapScale=1.5})
 assert(commands[#commands]:find('--mode iso --depth 10 --scale 1.5000',1,true))
 local before = #commands
 run({LR_format='JPEG'},true)
-assert(#commands == before and #errors == 1, 'bad render settings must block conversion')
+assert(#commands == before + 1 and #errors == 0, 'quick export must repair cached render settings')
+before = #commands
 run({heicCollisionHandling='bad'})
 run({conversionTool='bad'})
 run({gainMapScale=0/0})
 run({imageQuality=101})
-assert(#commands == before and #errors == 5)
+assert(#commands == before and #errors == 4)
 
 deleted = {}
 exitCode = 1
@@ -128,3 +153,49 @@ assert(not props.gainMapQualityAvailable and not props.gainMapQualityEditable)
 props.conversionTool='toGainMapHDR';props.observers.conversionTool()
 assert(props.gainMapQualityEditable and props.gainMapQualityEnabled)
 print('PASS: opt-in ISO quality command, validation and UI mode availability')
+
+-- A headless invocation uses persisted HDR settings without startDialog/UI hooks.
+run({conversionTool='toGainMapHDR',gainMapStandard='iso',heicBitDepth='10',
+    gainMapScale=2,gainMapQualityEnabled=true,gainMapQuality=63,
+    LR_format='JPEG',LR_export_bitDepth=8,LR_export_colorSpace='sRGB',
+    LR_enableHDRDisplay=false,LR_maximumCompatibility=true},true)
+assert(commands[#commands]:find('--mode iso --depth 10 --scale 2.0000 --quality 0.7000 --gain-quality 0.6300',1,true))
+print('PASS: context render startup, no-dialog Export with Previous, persisted plugin parameters')
+
+for _, status in ipairs({2,512}) do
+    recoveredSettings=nil; deleted={}; exitSequence={status,0}
+    local settings={gainMapStandard='iso',gainMapQualityEnabled=true,gainMapQuality=63,
+        LR_renamingTokensOn=true, LR_tokens='custom-name', LR_reimportExportedPhoto=true}
+    run(settings)
+    assert(recoveredSettings and recoveredSettings.LR_format=='TIFF' and recoveredSettings.LR_export_bitDepth==16)
+    assert(recoveredSettings.LR_exportServiceProvider=='com.adobe.ag.export.file', 'avoid recursive plugin invocation')
+    assert(recoveredSettings.LR_tokens=='custom-name' and recoveredSettings.LR_export_destinationType=='specificFolder')
+    assert(not recoveredSettings.LR_reimportExportedPhoto and settings.LR_reimportExportedPhoto)
+    assert(commands[#commands]:find('/tmp/corrected.tif',1,true))
+    assert(deleted[#deleted]==source and deleted[#deleted-1]=='/tmp/corrected.tif')
+end
+exitSequence={2,1}; deleted={}
+run({})
+for _, path in ipairs(deleted) do assert(path:match('%.log$'), 'failed recovery must preserve both intermediate files') end
+exitSequence={2,2}; local initial=#commands
+run({})
+assert(#commands==initial+2, 'recovery must stop after one retry')
+print('PASS: cached JPEG recovery from original photo, no recursion, preserved settings, cleanup and bounded retry')
+
+-- Model the SDK observable table. Built-in pairs exposes private storage,
+-- while :pairs returns real settings; passing the former into a new session
+-- makes Lightroom ignore the overrides and render its cached JPEG defaults.
+local values={gainMapStandard='iso',LR_tokens='observable-name',LR_size_maxWidth=2048}
+local observable=setmetatable({['< contents >']=values}, {
+    __index=function(_, key)
+        if key=='pairs' then return function() return pairs(values) end end
+        return values[key]
+    end,
+    __newindex=function(_, key, value) values[key]=value end,
+})
+exitSequence={2,0}; recoveredSettings=nil
+run(observable, true)
+assert(recoveredSettings.LR_tokens=='observable-name' and recoveredSettings.LR_size_maxWidth==2048)
+assert(recoveredSettings['< contents >']==nil, 'never copy private observable storage')
+assert(recoveredSettings.LR_format=='TIFF' and recoveredSettings.LR_export_colorSpace=='p3_hdr')
+print('PASS: SDK observable settings copied through :pairs, without stale private storage')

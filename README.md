@@ -1,6 +1,6 @@
 # Lightroom Classic HEIC HDR 导出插件（中文增强版）
 
-这是 [fengshenx/LR_GainMap_HDR_Export_Plugin](https://github.com/fengshenx/LR_GainMap_HDR_Export_Plugin) 的 fork，保留原项目历史并增加中文界面、格式控制和导出保护。当前插件版本为 **1.0.0.7**。
+这是 [fengshenx/LR_GainMap_HDR_Export_Plugin](https://github.com/fengshenx/LR_GainMap_HDR_Export_Plugin) 的 fork，保留原项目历史并增加中文界面、格式控制和导出保护。当前插件版本为 **1.0.0.8**。
 
 A Chinese-language fork with Apple/ISO gain maps, independent ISO gain-map quality, 8/10-bit base images, gain-map scaling, direct PQ/HLG HDR, and safe output naming. The Swift source and universal macOS executables are included.
 
@@ -18,9 +18,11 @@ A Chinese-language fork with Apple/ISO gain maps, independent ISO gain-map quali
 - 增益图缩小倍数 **1–2**，支持小数；2 表示宽、高各减半，主图尺寸不变。奇数尺寸向上取整。
 - ISO 增益图品质 **0–100**：勾选「单独设置」后生效，初始数值 80；默认关闭，旧预设继续使用系统默认编码。该数值是编码品质，不是 QP，没有固定换算公式。
 - HDR 模式在渲染前自动配置 TIFF 16 位、HDR 色彩空间、HDR 输出开启和最大兼容关闭，并检查实际中间文件。
-- 最终 HEIC 重名可选「自动改名」「跳过」「覆盖」，默认自动改名。编码先在独立暂存目录完成，成功后再原子发布；失败保留中间 TIFF。
+- 最终 HEIC 重名可选「自动改名」「跳过」「覆盖」，默认自动改名。编码先在独立暂存目录完成，成功后再原子发布；失败保留中间文件。
 
 **自动匹配照片的 SDR／HDR 状态，无需切换导出设置。** 未开启 HDR 编辑的照片导出普通 SDR HEIC，不附带增益图；开启 HDR 编辑的照片按所选 HDR 模式导出。同一批照片可以混合 SDR 和 HDR。
+
+「使用上次设置导出」遇到 Lightroom 缓存的 JPEG 或 8 位中间文件时，会从原照片重新渲染一次 16 位 TIFF，再使用已保存的 HEIC 参数编码；失败保留中间文件。已在 Lightroom Classic 15.5.1 连续两次验证快捷导出及一次普通窗口导出。
 
 自动判断以每张照片实际渲染的 TIFF 色彩编码为准。SDR 路径保留 Lightroom 已渲染的外观及色彩配置，不再额外做 HDR 色调映射；主图位深和品质沿用当前设置，忽略增益图参数。导出选项不会修改照片的 HDR 编辑开关。
 
@@ -79,7 +81,7 @@ export_heic.lrdevplugin/HEICExport input.tif output-folder \
   --gain-quality 0.8 --collision rename
 ```
 
-`--gain-quality` 仅适用于 ISO HEIC；省略则使用系统默认。直接调用转换程序时，对应参数为 `-Q 0.8`。`HEICExport` 退出码为 0（成功）、10（跳过）、1（失败）。
+`--gain-quality` 仅适用于 ISO HEIC；省略则使用系统默认。直接调用转换程序时，对应参数为 `-Q 0.8`。`HEICExport` 退出码为 0（成功）、10（跳过）、2（中间文件格式或位深不符合要求）、1（其他失败）。
 
 ## 测试与实现说明
 

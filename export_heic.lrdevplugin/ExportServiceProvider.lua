@@ -5,7 +5,6 @@ local LrExportSession = import 'LrExportSession'
 local LrFileUtils = import 'LrFileUtils'
 local LrView = import 'LrView'
 local LrBinding = import 'LrBinding'
-local LrProgressScope = import 'LrProgressScope'
 local LrUUID = import 'LrUUID'
 
 local exportServiceProvider = {}
@@ -237,10 +236,50 @@ local function shellQuote(value)
     return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
 end
 
+-- Some Lightroom versions reuse a cached JPEG renderer for Export with
+-- Previous, even though this service's property table says TIFF. Recover from
+-- the original LrPhoto, never by converting the lossy cached JPEG into a TIFF.
+local function renderCorrectIntermediate(rendition, settings, folder)
+    if not rendition.photo then return false, '无法获取需要重新渲染的原照片。' end
+    local renderSettings = {}
+    -- Lightroom uses an observable table: Lua pairs() exposes its private
+    -- storage, which would cause the new session to reuse stale defaults.
+    local iterator, state, initial
+    if type(settings.pairs) == 'function' then
+        iterator, state, initial = settings:pairs()
+    else
+        iterator, state, initial = pairs(settings)
+    end
+    for key, value in iterator, state, initial do renderSettings[key] = value end
+    forceRenderSettings(renderSettings)
+    renderSettings.LR_exportServiceProvider = 'com.adobe.ag.export.file'
+    renderSettings.LR_export_destinationType = 'specificFolder'
+    renderSettings.LR_export_destinationPathPrefix = folder
+    renderSettings.LR_export_useSubfolder = false
+    renderSettings.LR_export_useParentFolder = false
+    renderSettings.LR_reimportExportedPhoto = false
+    renderSettings.LR_export_postProcessing = 'doNothing'
+    local ok, success, path = LrTasks.pcall(function()
+        local session = LrExportSession {
+            photosToExport = { rendition.photo }, exportSettings = renderSettings,
+        }
+        session:doExportOnCurrentTask()
+        for _, corrected in session:renditions() do
+            return corrected:waitForRender()
+        end
+        return false, 'Lightroom 没有生成重新渲染的文件。'
+    end)
+    if not ok then return false, tostring(success) end
+    return success, path
+end
+
 exportServiceProvider.processRenderedPhotos = function(functionContext, exportContext)
     local exportSession = exportContext.exportSession
     local nPhotos = exportSession:countRenditions()
     local settings = exportContext.propertyTable
+    -- Export with Previous does not run any dialog initialization. Apply the
+    -- required rendition settings before the context starts its render task.
+    forceRenderSettings(settings)
     local imageQuality = tonumber(settings.imageQuality or 70)
     local conversionTool = settings.conversionTool or 'toGainMapHDR'
     local gainMapStandard = settings.gainMapStandard or 'apple'
@@ -283,32 +322,46 @@ exportServiceProvider.processRenderedPhotos = function(functionContext, exportCo
     local depth = conversionTool == 'toGainMapHDR' and heicBitDepth or '10'
     local scale = conversionTool == 'toGainMapHDR' and gainMapScale or 1
     local runner = LrPathUtils.child(_PLUGIN.path, 'HEICExport')
-    local progressScope = LrProgressScope({ title = '正在导出 HEIC', functionContext = functionContext })
+    local progressScope = exportContext:configureProgress { title = '正在导出 HEIC' }
     local skipped = 0
 
-    for i, rendition in exportSession:renditions() do
+    -- The context starts Lightroom's render pipeline with this service's settings.
+    -- Iterating the bare session bypasses that startup in Export with Previous.
+    for i, rendition in exportContext:renditions { stopIfCanceled = true } do
         if progressScope:isCanceled() then break end
         progressScope:setPortionComplete(i-1, nPhotos)
         local success, pathOrMessage = rendition:waitForRender()
         if success then
             local folder = LrPathUtils.parent(pathOrMessage)
-            local logPath = LrPathUtils.child(LrPathUtils.getStandardFilePath('temp'),
-                'heic-export-' .. LrUUID.generateUUID() .. '.log')
-            local gainFlag = gainQualityEnabled and string.format(' --gain-quality %.4f', gainQuality / 100) or ''
-            local command = string.format('%s %s %s --mode %s --depth %s --scale %.4f --quality %.4f%s --collision %s > %s 2>&1',
-                shellQuote(runner), shellQuote(pathOrMessage), shellQuote(folder),
-                modes[conversionTool], depth, scale, imageQuality / 100, gainFlag, collision, shellQuote(logPath))
-            local result = LrTasks.execute(command)
-            local readOK, log = pcall(LrFileUtils.readFile, logPath)
-            LrFileUtils.delete(logPath)
-            if result == 0 then
+            local originalPath = pathOrMessage
+            local function convert(path)
+                local logPath = LrPathUtils.child(LrPathUtils.getStandardFilePath('temp'),
+                    'heic-export-' .. LrUUID.generateUUID() .. '.log')
+                local gainFlag = gainQualityEnabled and string.format(' --gain-quality %.4f', gainQuality / 100) or ''
+                local command = string.format('%s %s %s --mode %s --depth %s --scale %.4f --quality %.4f%s --collision %s > %s 2>&1',
+                    shellQuote(runner), shellQuote(path), shellQuote(folder),
+                    modes[conversionTool], depth, scale, imageQuality / 100, gainFlag, collision, shellQuote(logPath))
+                local result = LrTasks.execute(command)
+                local readOK, log = pcall(LrFileUtils.readFile, logPath)
+                LrFileUtils.delete(logPath)
+                return result, readOK and log and log ~= '' and log or ('错误码 ' .. tostring(result))
+            end
+            local result, detail = convert(pathOrMessage)
+            if (result == 2 or result == 512) and conversionTool ~= 'sips' and not progressScope:isCanceled() then
+                local rendered, correctedPath = renderCorrectIntermediate(rendition, settings, folder)
+                if rendered then
+                    pathOrMessage = correctedPath
+                    result, detail = convert(correctedPath)
+                else
+                    result, detail = 1, '自动重新渲染失败：' .. tostring(correctedPath)
+                end
+            end
+            if result == 0 or result == 10 or result == 2560 then
+                if result ~= 0 then skipped = skipped + 1 end
                 LrFileUtils.delete(pathOrMessage)
-            elseif result == 10 or result == 2560 then
-                skipped = skipped + 1
-                LrFileUtils.delete(pathOrMessage)
+                if originalPath ~= pathOrMessage then LrFileUtils.delete(originalPath) end
             else
-                local detail = readOK and log and log ~= '' and log or ('错误码 ' .. tostring(result))
-                LrDialogs.showError('HEIC 导出失败，中间 TIFF 已保留。\n' .. detail)
+                LrDialogs.showError('HEIC 导出失败，中间文件已保留。\n' .. detail)
             end
         else
             LrDialogs.showError('无法渲染照片：' .. tostring(pathOrMessage))

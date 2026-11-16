@@ -33,7 +33,8 @@ print('PASS: rename / skip / overwrite; valid 10-bit PQ and HLG, no gain maps', 
 for input in [root/'sdr-8.tif', root/'sdr.jpg', root/'broken.tif']:
     target = folder/(input.stem+'.heic'); target.write_bytes(b'keep-original')
     result = run(folder, 'hlg', 'overwrite', input)
-    assert result.returncode == 1 and target.read_bytes() == b'keep-original'
+    assert result.returncode in ((1, 2) if input.name == 'broken.tif' else (2,)), (input.name, result.stderr)
+    assert target.read_bytes() == b'keep-original'
     assert input.is_file() and not list(folder.glob('.heic-export-*'))
 print('PASS: invalid intermediate formats rejected; existing HEIC and inputs preserved', flush=True)
 
